@@ -1,156 +1,137 @@
 #include "main.h"
+/**************************************************/
+//user editable constants
+
+//motor ports
+const int left_front = 1;
+const int left_rear = 2;
+const int right_front = 3;
+const int right_rear = 4;
+
+//distance constants
+const int distance_constant = 545; //ticks per tile
+const double degree_constant = 2.3; //ticks per degree
+
+/**************************************************/
+//advanced tuning (PID and slew)
+
+//slew control (autonomous only)
+const int accel_step = 8; //smaller number = more slew
+const int deccel_step = 256; //200 = no slew
+
+//straight driving constants
+const double driveKP = .3;
+const double driveKD = .5;
+
+//turning constants
+const double turnKP = .8;
+const double turnKD = 3;
+
+
+/**************************************************/
+//edit below with caution!!!
+
 
 #define MAX 127;
-int driveTarget;
-int turnTarget;
-int slant = 0;
-int maxSpeed = MAX
 
-//defining motors & gyro
-Motor leftDrive(11, MOTOR_GEARSET_18, 0,  MOTOR_ENCODER_DEGREES);
-Motor leftDrive1(12, MOTOR_GEARSET_18, 0, MOTOR_ENCODER_DEGREES);
-Motor rightDrive(13, MOTOR_GEARSET_18, 1, MOTOR_ENCODER_DEGREES);
-Motor rightDrive1(14, MOTOR_GEARSET_18, 1, MOTOR_ENCODER_DEGREES);
-ADIGyro gyro ('A');
+static int driveMode = 1;
+static int driveTarget = 0;
+static int turnTarget = 0;
+static int maxSpeed = MAX;
 
-/************************Basic Control************************************/
+
+//motors
+Motor left1(left_front, MOTOR_GEARSET_18, 0,  MOTOR_ENCODER_DEGREES);
+Motor left2(left_rear, MOTOR_GEARSET_18, 0,  MOTOR_ENCODER_DEGREES);
+Motor right1(right_front, MOTOR_GEARSET_18, 0,  MOTOR_ENCODER_DEGREES);
+Motor right2(right_rear, MOTOR_GEARSET_18, 0,  MOTOR_ENCODER_DEGREES);
+
+/**************************************************/
+//basic control
 void left(int vel)
 {
-  leftDrive.move(vel);
-  leftDrive1.move(vel);
+  left1.move(vel);
+  left2.move(vel);
 }
 
 void right(int vel)
 {
-  rightDrive.move(vel);
-  rightDrive1.move(vel);
+  right1.move(vel);
+  right2.move(vel);
 }
 
-/************************Modifications************************************/
-
-void resetDrive()
-{
-  leftDrive.tare_position();
-  leftDrive1.tare_position();
-  rightDrive.tare_position();
-  rightDrive1.tare_position();
-}
-
-void resetAll()
-{
-  resetDrive();
+void reset(){
   maxSpeed = MAX;
-  slant = 0;
+  driveTarget = 0;
+  turnTarget = 0;
+  left1.tare_position();
+  left2.tare_position();
+  right1.tare_position();
+  right2.tare_position();
+  left(0);
+  right(0);
 }
 
-void setSlant(int s)
-{
-  /*(if(mirror)
-  {
-    s = -s;
-  }
-   slant = s; */
+int drivePos(){
+  return (left1.get_position() + left2.get_position())/2;
 }
 
-void setSpeed(int speed)
-{
-  maxSpeed = speed;
-}
+/**************************************************/
+//slew control
+static int leftSpeed = 0;
+static int rightSpeed = 0;
 
-void brake()
-{
-  leftDrive.set_brake_mode(MOTOR_BRAKE_HOLD);
-  leftDrive1.set_brake_mode(MOTOR_BRAKE_HOLD);
-  rightDrive.set_brake_mode(MOTOR_BRAKE_HOLD);
-  rightDrive1.set_brake_mode(MOTOR_BRAKE_HOLD);
-}
-
-void coast()
-{
-  leftDrive.set_brake_mode(MOTOR_BRAKE_COAST);
-  leftDrive1.set_brake_mode(MOTOR_BRAKE_COAST);
-  rightDrive.set_brake_mode(MOTOR_BRAKE_COAST);
-  rightDrive1.set_brake_mode(MOTOR_BRAKE_COAST);
-}
-
-/************************Acceleration************************************/
-
-void leftSlew(int slewSpeed)
-{
+void leftSlew(int leftTarget){
   int step;
-  static int speed = 0;
-  if(abs(speed) < abs(slewSpeed))
-  {
-    step = 5;
-  }
+
+  if(abs(leftSpeed) < abs(leftTarget))
+    step = accel_step;
   else
-  {
-    step = 256; // no slew
-  }
+    step = deccel_step;
 
-
-  if(speed < slewSpeed - step)
-  {
-    speed += step;
-  }
-  else if(speed > slewSpeed + step)
-  {
-    speed -= step;
-  }
+  if(leftTarget > leftSpeed + step)
+    leftSpeed += step;
+  else if(leftTarget < leftSpeed - step)
+    leftSpeed -= step;
   else
-  {
-    speed = slewSpeed;
-  }
+    leftSpeed = leftTarget;
 
-   left(speed);
+  left(leftSpeed);
 }
 
-void rightSlew(int slewSpeed)
-{
+//slew control
+void rightSlew(int rightTarget){
   int step;
-  static int speed = 0;
-  if(abs(speed) < abs(slewSpeed))
-  {
-    step = 5;
-  }
+
+  if(abs(rightSpeed) < abs(rightTarget))
+    step = accel_step;
   else
-  {
-    step = 256; // no slew
-  }
+    step = deccel_step;
 
-
-  if(speed < slewSpeed - step)
-  {
-    speed += step;
-  }
-  else if(speed > slewSpeed + step)
-  {
-    speed -= step;
-  }
+  if(rightTarget > rightSpeed + step)
+    rightSpeed += step;
+  else if(rightTarget < rightSpeed - step)
+    rightSpeed -= step;
   else
-  {
-    speed = slewSpeed;
-  }
+    rightSpeed = rightTarget;
 
-   right(speed);
+  right(rightSpeed);
 }
 
-/************************Feedback************************************/
-
-bool isDriving()
-{
+/**************************************************/
+//feedback
+bool isDriving(){
   static int count = 0;
   static int last = 0;
   static int lastTarget = 0;
 
-  int leftPos = leftDrive.get_position();
-  int rightPos = rightDrive.get_position();
+  int curr = left2.get_position();
 
-  int curr = (abs(leftPos) + abs(rightPos))/2;
-  int thresh = 5;
-  int target = driveTarget;
+  int target = turnTarget;
+  if(driveMode == 1)
+    target = driveTarget;
 
-  if(abs(last-curr) < thresh)
+  if(abs(last-curr) < 3)
     count++;
   else
     count = 0;
@@ -162,125 +143,134 @@ bool isDriving()
   last = curr;
 
   //not driving if we haven't moved
-  if(count > 8)
+  if(count > 4)
     return false;
   else
     return true;
+
+}
+/**************************************************/
+//drive modifiers
+void setSpeed(int speed){
+  maxSpeed = speed;
 }
 
-/************************Auton Commands************************************/
-void driveAsync(int sp)
-{
-  resetDrive();
+/**************************************************/
+//autonomous functions
+void driveAsync(double sp){
+  sp *= distance_constant;
+  reset();
   driveTarget = sp;
-
+  driveMode = 1;
 }
 
-void drive(int sp)
-{
-  driveAsync(sp);
-  while(isDriving());
-}
-
-void turnAsync(int sp)
-{
-  resetDrive();
+void turnAsync(double sp){
+  sp *= degree_constant;
+  reset();
   turnTarget = sp;
+  driveMode = 0;
 }
 
-void turn(int sp)
-{
+void drive(double sp){
+  driveAsync(sp);
+  delay(450);
+  while(isDriving()) delay(20);
+}
+
+void turn(double sp){
   turnAsync(sp);
-  while(isDriving());
+  delay(450);
+  while(isDriving()) delay(20);
 }
 
-/************************Tasks************************************/
+void slowDrive(double sp, double dp){
+  driveAsync(sp);
 
-void driveTask(void *parameter)
-{
+  if(sp > 0)
+    while(drivePos() < dp) delay(20);
+  else
+    while(drivePos() > dp) delay(20);
+
+  setSpeed(60);
+  while(isDriving()) delay(20);
+}
+
+/**************************************************/
+//task control
+int driveTask(){
   int prevError = 0;
 
   while(1){
-    delay(20);
+    delay (20);
+
+    if(driveMode != 1)
+      continue;
 
     int sp = driveTarget;
 
-    double kp = 0;
-    double kd = 0;
+    double kp = driveKP;
+    double kd = driveKD;
 
-    //read sensor
-    int sv = leftDrive.get_position();
+    //read sensors
+    int sv = left2.get_position();
 
-    //calculate speed
+    //speed
     int error = sp-sv;
     int derivative = error - prevError;
     prevError = error;
     int speed = error*kp + derivative*kd;
 
-    //setting max and min speed
     if(speed > maxSpeed)
       speed = maxSpeed;
     if(speed < -maxSpeed)
       speed = -maxSpeed;
-    if(speed > 0 && speed < 20)
-      speed = 20;
-    if(speed < 0 && speed >-20)
-      speed = -20;
-
-      int posDiff = fabs(rightDrive.get_position()) - fabs(leftDrive.get_position()); // check for right encoder difference
-      		int posCorrection = signed(posDiff)*speed*.1; 					// posCorrection = 10% drivePower in the direction of posDiff
-
 
     //set motors
-    leftSlew(speed + posCorrection - slant);
-    rightSlew(speed + slant);
+    leftSlew(speed);
+    rightSlew(speed);
   }
+  return(0);
 }
 
-void turnTask(void *parameter)
-{
-  int prevError = 0;
+int turnTask(){
+  int prevError;
 
   while(1){
     delay(20);
 
-    int sp = driveTarget;
+    if(driveMode != 0)
+      continue;
 
-    double kp = 0;
-    double kd = 0;
+    int sp = turnTarget;
 
-    //read sensor
-    int sv = gyro.get_value();
+    double kp = turnKP;
+    double kd = turnKD;
 
-    //calculate speed
+    int sv = (right1.get_position() - left1.get_position()/2);
     int error = sp-sv;
     int derivative = error - prevError;
     prevError = error;
     int speed = error*kp + derivative*kd;
 
-    //setting max and min speed
     if(speed > maxSpeed)
       speed = maxSpeed;
     if(speed < -maxSpeed)
       speed = -maxSpeed;
-    if(speed > 0 && speed < 20)
-      speed = 20;
-    if(speed < 0 && speed >-20)
-      speed = -20;
 
-
-    //set motors
-    leftSlew(speed - slant);
-    rightSlew(speed + slant);
-  }
+    leftSlew(-speed);
+    rightSlew(speed);
+    }
+  return(0);
 }
 
-/************************Driver Control************************************/
 
-void driveOP()
-{
-  leftDrive.move(controller.get_analog(ANALOG_LEFT_Y));
-  leftDrive1.move(controller.get_analog(ANALOG_LEFT_Y));
-  rightDrive.move(controller.get_analog(ANALOG_RIGHT_Y));
-  rightDrive1.move(controller.get_analog(ANALOG_RIGHT_Y));
+/**************************************************/
+//operator control
+void tankOp(){
+  driveMode = 2; //turns off autonomous tasks
+  int lJoy = Controller1.Axis3.position();
+  int rJoy = Controller1.Axis2.position();
+
+  left(lJoy);
+  right(rJoy);
 }
